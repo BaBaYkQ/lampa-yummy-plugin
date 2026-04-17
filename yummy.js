@@ -3,7 +3,7 @@
     window.yummy_safe_loaded = true;
 
     const API = 'https://api.yani.tv';
-    const TOKEN = 'ТУТ_ТОКЕН';
+    const TOKEN = 'k8deq_gljhple1r3q-ia-b7u-7ee3lbh';
 
     function api(url, ok, fail) {
         try {
