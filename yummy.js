@@ -1,104 +1,161 @@
-// Робоча версія плагіна Lampa для YummyAnime
+// Плагін Lampa для YummyAnime (виправлена версія)
 (function () {
     if (window.yummy_plugin_loaded) return;
     window.yummy_plugin_loaded = true;
 
-    // ⚙️ НАЛАШТУВАННЯ: Вставте ваш API-ключ
-    const API_TOKEN = '2m1x9bxtu1t-p29w';
-    const API_BASE_URL = 'https://api.yani.tv'; // Базовий URL API
+    // ===== НАЛАШТУВАННЯ =====
+    // Отримайте токен тут: https://yummyani.me/dev/applications
+    const API_TOKEN = 'k8deq_gljhple1r3q-ia-b7u-7ee3lbh';  // ← ЗАМІНІТЬ НА РЕАЛЬНИЙ ТОКЕН!
+    const API_BASE = 'https://api.yani.tv';
+    // =========================
 
     const startPlugin = function () {
-        console.log('✅ YummyAnime Plugin: Запуск успішний!');
+        console.log('✅ YummyAnime Plugin: запущено');
+
+        // Перевірка наявності токена
+        if (!API_TOKEN || API_TOKEN === 'ВАШ_API_ТОКЕН') {
+            console.error('❌ YummyAnime: Потрібно вказати API_TOKEN у коді плагіна!');
+            return;
+        }
 
         Lampa.Api.sources.push({
-            id: 'yummy_source',
+            id: 'yummy_source_v2',
             name: '🎬 YummyAnime',
             filter: false,
 
-            // --- Отримання списку аніме ---
+            // ========== ОТРИМАННЯ СПИСКУ ==========
             list: (page, filter, category, callback) => {
                 const limit = 30;
                 const offset = (page - 1) * limit;
-                const url = `${API_BASE_URL}/anime?limit=${limit}&offset=${offset}`;
+                const url = `${API_BASE}/anime?limit=${limit}&offset=${offset}`;
+
+                console.log(`📡 Запит списку: ${url}`);
 
                 Lampa.Network.get(url, (response) => {
                     try {
                         const data = JSON.parse(response);
-                        const items = (data.anime || []).map(item => ({
+                        console.log('📦 Отримано дані:', data);
+                        
+                        // ВИПРАВЛЕНО: використовуємо data.response замість data.anime
+                        let animeList = data.response || data.anime || [];
+                        
+                        // Якщо response не масив, а об'єкт з полем data
+                        if (animeList.data && Array.isArray(animeList.data)) {
+                            animeList = animeList.data;
+                        }
+                        
+                        const items = animeList.map(item => ({
                             title: item.title || item.original_title || 'Без назви',
-                            poster: item.poster_url || null,
+                            poster: item.poster_url || (item.poster && item.poster.url) || null,
                             description: item.description || '',
-                            id: item.id,
+                            id: item.anime_id || item.id,
                         }));
-                        callback(items, data.total || 0);
+                        
+                        const total = data.total || data.count || animeList.length;
+                        console.log(`✅ Завантажено ${items.length} аніме з ${total}`);
+                        callback(items, total);
+                        
                     } catch (e) {
-                        console.error('Помилка обробки списку:', e);
+                        console.error('❌ Помилка парсингу списку:', e);
                         callback([], 0);
                     }
                 }, (error) => {
-                    console.error('Помилка завантаження списку:', error);
+                    console.error('❌ Помилка мережі:', error);
                     callback([], 0);
                 }, { headers: { 'X-Application': API_TOKEN } });
             },
 
-            // --- Отримання посилання на відео ---
+            // ========== ОТРИМАННЯ ВІДЕО ==========
             play: (data, callback) => {
                 const animeId = data.id;
                 const episodeNumber = data.episode;
-                const url = `${API_BASE_URL}/anime/${animeId}?include_videos=true`;
+                const url = `${API_BASE}/anime/${animeId}?include_videos=true`;
+
+                console.log(`📡 Запит відео для аніме ID: ${animeId}, серія: ${episodeNumber}`);
 
                 Lampa.Network.get(url, (response) => {
                     try {
                         const animeData = JSON.parse(response);
-                        const video = (animeData.videos || []).find(v => v.episode === episodeNumber);
+                        
+                        // ВИПРАВЛЕНО: отримуємо відео з правильного місця
+                        let videos = animeData.videos || [];
+                        
+                        // Якщо відео всередині response
+                        if (animeData.response && animeData.response.videos) {
+                            videos = animeData.response.videos;
+                        }
+                        
+                        const video = videos.find(v => v.episode === episodeNumber);
+                        
                         if (video && video.stream_url) {
+                            console.log(`🎞️ Знайдено відео: ${video.stream_url}`);
                             callback({
                                 url: video.stream_url,
-                                quality: 'HD',
+                                quality: video.quality || 'HD',
                             });
                         } else {
-                            console.error('Відео для серії не знайдено');
+                            console.error('❌ Відео для серії не знайдено');
                             callback(null);
                         }
+                        
                     } catch (e) {
-                        console.error('Помилка обробки відео:', e);
+                        console.error('❌ Помилка парсингу відео:', e);
                         callback(null);
                     }
                 }, (error) => {
-                    console.error('Помилка завантаження відео:', error);
+                    console.error('❌ Помилка мережі при отриманні відео:', error);
                     callback(null);
                 }, { headers: { 'X-Application': API_TOKEN } });
             },
 
-            // --- Пошук ---
+            // ========== ПОШУК ==========
             search: (query, page, callback) => {
-                if (!query || query.length < 3) return callback([], 0);
+                if (!query || query.length < 3) {
+                    callback([], 0);
+                    return;
+                }
+                
                 const limit = 20;
                 const offset = (page - 1) * limit;
-                const url = `${API_BASE_URL}/anime/search?query=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`;
+                const url = `${API_BASE}/anime/search?query=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`;
+
+                console.log(`🔍 Пошук: ${query}`);
 
                 Lampa.Network.get(url, (response) => {
                     try {
                         const data = JSON.parse(response);
-                        const items = (data.anime || []).map(item => ({
+                        
+                        // ВИПРАВЛЕНО: аналогічно методу list
+                        let animeList = data.response || data.anime || [];
+                        if (animeList.data && Array.isArray(animeList.data)) {
+                            animeList = animeList.data;
+                        }
+                        
+                        const items = animeList.map(item => ({
                             title: item.title || item.original_title || 'Без назви',
-                            poster: item.poster_url || null,
+                            poster: item.poster_url || (item.poster && item.poster.url) || null,
                             description: item.description || '',
-                            id: item.id,
+                            id: item.anime_id || item.id,
                         }));
-                        callback(items, data.total || 0);
+                        
+                        const total = data.total || items.length;
+                        callback(items, total);
+                        
                     } catch (e) {
-                        console.error('Помилка пошуку:', e);
+                        console.error('❌ Помилка пошуку:', e);
                         callback([], 0);
                     }
                 }, (error) => {
-                    console.error('Помилка під час пошуку:', error);
+                    console.error('❌ Помилка мережі при пошуку:', error);
                     callback([], 0);
                 }, { headers: { 'X-Application': API_TOKEN } });
             },
         });
+        
+        console.log('✅ YummyAnime: джерело зареєстровано!');
     };
 
+    // Очікуємо готовності Lampa
     if (window.appready) {
         startPlugin();
     } else {
