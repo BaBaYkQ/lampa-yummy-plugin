@@ -1,245 +1,147 @@
 (function() {
     "use strict";
 
-    // --- НАЛАШТУВАННЯ ПЛАГІНА ---
+    // ========== НАЛАШТУВАННЯ ==========
     const YUMMY_API_BASE = 'https://api.yani.tv';
     const YUMMY_PUBLIC_TOKEN = 'k8deq_gljhple1r3q-ia-b7u-ee3lbh';
     const YUMMY_APP_HEADER = { 'X-Application': YUMMY_PUBLIC_TOKEN };
     const YUMMY_LANG = 'uk';
 
+    // Унікальний ID користувача для статистики (не обов'язково)
     var unic_id = Lampa.Storage.get('lampac_unic_id', '');
     if (!unic_id) {
         unic_id = Lampa.Utils.uid(8).toLowerCase();
         Lampa.Storage.set('lampac_unic_id', unic_id);
     }
 
+    // Додавання заголовків для запитів
     function addHeaders() {
         return {
             'X-Application': YUMMY_PUBLIC_TOKEN,
-            'Accept': 'application/json, image/avif, image/webp',
+            'Accept': 'application/json',
             'Lang': YUMMY_LANG
         };
     }
 
-    function formatEpisodeNumber(episodeNumber) {
-        return (episodeNumber < 10 ? '0' : '') + episodeNumber;
+    // Форматування номера епізоду (01, 02...)
+    function formatEpisodeNumber(ep) {
+        return (ep < 10 ? '0' : '') + ep;
     }
 
-    // --- КОМПОНЕНТ ПЕРЕГЛЯДУ ---
-    var Network = Lampa.Reguest;
+    // ========== ШАБЛОНИ ==========
+    function resetTemplates() {
+        // CSS-стилі
+        if (!$('#yummyanime-styles').length) {
+            $('body').append(`
+                <style id="yummyanime-styles">
+                    .yummyanime-button svg { width: 1.8em; height: 1.8em; margin-right: 0.5em; }
+                    .yummyanime-empty { text-align: center; padding: 2em; color: #aaa; }
+                    .yummyanime-item { display: flex; padding: 1em; background: rgba(0,0,0,0.3); border-radius: 0.5em; margin-bottom: 0.8em; }
+                    .yummyanime-item img { width: 7em; height: 10em; object-fit: cover; border-radius: 0.3em; margin-right: 1em; }
+                    .yummyanime-item-info { flex: 1; }
+                    .yummyanime-item-title { font-size: 1.4em; font-weight: bold; margin-bottom: 0.3em; }
+                    .yummyanime-item-desc { font-size: 0.9em; color: #ccc; }
+                </style>
+            `);
+        }
 
+        // Шаблон картки аніме в результатах пошуку
+        Lampa.Template.add('yummyanime_item', `
+            <div class="yummyanime-item selector">
+                <img src="{poster}" onerror="this.src='./img/img_broken.svg'"/>
+                <div class="yummyanime-item-info">
+                    <div class="yummyanime-item-title">{title}</div>
+                    <div class="yummyanime-item-desc">{year} ● {episodes} серій</div>
+                </div>
+            </div>
+        `);
+
+        // Шаблон порожнього результату
+        Lampa.Template.add('yummyanime_empty', `
+            <div class="yummyanime-empty">
+                <h2>Нічого не знайдено</h2>
+                <p>Спробуйте змінити пошуковий запит</p>
+            </div>
+        `);
+    }
+
+    // ========== КОМПОНЕНТ ПЕРЕГЛЯДУ ==========
     function Component(object) {
-        var network = new Network();
+        var network = new Lampa.Reguest();
         var scroll = new Lampa.Scroll({ mask: true, over: true });
         var files = new Lampa.Explorer(object);
         var filter = new Lampa.Filter(object);
-        
-        var sources = {};
-        var balanser;
-        var source;
-        var filter_sources = [];
-        var filter_find = { season: [], voice: [] };
-        
+
         var _this = this;
 
         this.initialize = function() {
             this.loading(true);
-            
-            filter.onSearch = function(value) {
-                Lampa.Activity.replace({ search: value, clarification: true, similar: true });
-            };
-            
-            filter.onBack = function() { _this.start(); };
-            filter.render().find('.selector').on('hover:enter', function() {});
-            filter.render().find('.filter--search').appendTo(filter.render().find('.torrent-filter'));
-            
-            filter.onSelect = function(type, a, b) {
-                if (type == 'filter') {
-                    if (a.reset) {
-                        _this.replaceChoice({ season: 0, voice: 0, voice_url: '', voice_name: '' });
-                        setTimeout(function() {
-                            Lampa.Select.close();
-                            Lampa.Activity.replace({ clarification: 0, similar: 0 });
-                        }, 10);
-                    } else {
-                        var url = filter_find[a.stype][b.index].url;
-                        var choice = _this.getChoice();
-                        if (a.stype == 'voice') {
-                            choice.voice_name = filter_find.voice[b.index].title;
-                            choice.voice_url = url;
-                        }
-                        choice[a.type] = b.index;
-                        _this.saveChoice(choice);
-                        _this.reset();
-                        _this.request(url);
-                        setTimeout(Lampa.Select.close, 10);
-                    }
-                } else if (type == 'sort') {
-                    Lampa.Select.close();
-                    object.lampac_custom_select = a.source;
-                    _this.changeBalanser(source);
-                }
-            };
-            
-            if (filter.addButtonOnBackBar) filter.addButtonOnBackBar();
-            filter.render().find('.filter--sort span').text(Lampa.Lang.translate('lampac_balanser'));
-            
+
+            // Налаштування фільтра (джерело тільки одне - YummyAnime)
+            filter.set('sort', [{ title: 'YummyAnime', source: 'yummyanime', selected: true }]);
+            filter.render().find('.filter--sort span').text('Джерело');
+            filter.render().find('.filter--search').remove(); // Прибираємо поле пошуку з фільтра, бо пошук буде окремо
+
             scroll.body().addClass('list-torrent');
             files.appendFiles(scroll.render());
             files.appendHead(filter.render());
             scroll.minus(files.render().find('.explorer__files-head'));
-            scroll.body().append(Lampa.Template.get('lampac_content_loading'));
-            
+
             Lampa.Controller.enable('content');
             this.loading(false);
 
-            // Якщо плагін викликано безпосередньо з посиланням
-            if (object.url) {
-                network.native(object.url, this.parse.bind(this), function() {
-                    files.render().find('.torrent-filter').remove();
-                    _this.empty();
-                }, false, { dataType: 'text', headers: addHeaders() });
-                return;
-            }
-
-            this.externalids().then(function() {
-                return _this.createSource();
-            }).then(function(json) {
-                _this.search();
-            }).catch(function(e) {
-                _this.noConnectToServer(e);
-            });
-        };
-
-        this.externalids = function() {
-            return new Promise(function(resolve) {
-                // YummyAnime шукає за назвою, тому зовнішні ID не обов'язкові, 
-                // але залишимо для сумісності з кодом-основою
-                resolve();
-            });
-        };
-
-        this.createSource = function() {
-            var _this = this;
-            return new Promise(function(resolve) {
-                // В YummyAnime одне джерело - сам YummyAnime
-                sources['yummyanime'] = { name: 'YummyAnime', show: true };
-                filter_sources = ['yummyanime'];
-                balanser = 'yummyanime';
-                Lampa.Storage.set('active_balanser', balanser);
-                resolve();
-            });
+            // Почати пошук
+            this.search();
         };
 
         this.search = function() {
-            this.filter({ source: filter_sources }, this.getChoice());
-            this.find();
-        };
-
-        this.find = function() {
-            var url = YUMMY_API_BASE + '/search?q=' + encodeURIComponent(object.search);
+            var query = object.search || object.movie.title;
+            var url = YUMMY_API_BASE + '/search?q=' + encodeURIComponent(query);
             this.request(url);
         };
 
         this.request = function(url) {
             var _this = this;
-            network.native(url, function(str) {
-                _this.parse(str);
+            network.silent(url, function(data) {
+                _this.parse(data);
             }, function() {
-                _this.doesNotAnswer();
+                _this.empty();
             }, false, { dataType: 'json', headers: addHeaders() });
         };
 
         this.parse = function(data) {
             this.activity.loader(false);
-            
-            // Обробка відповіді від YummyAnime API
+            scroll.clear();
+
             if (data && data.data && data.data.length > 0) {
                 var items = data.data;
-                var videos = items.filter(function(v) {
-                    return v.videos && v.videos.length > 0;
+                items.forEach(function(anime) {
+                    var html = $(Lampa.Template.get('yummyanime_item', {
+                        title: anime.title,
+                        year: anime.year || '—',
+                        episodes: anime.episodes_count || '?',
+                        poster: anime.poster || ''
+                    }));
+
+                    html.on('hover:enter', function() {
+                        // При виборі аніме показуємо інформацію (поки що просто alert, бо потрібен окремий компонент для серій)
+                        Lampa.Noty.show('Вибрано: ' + anime.title);
+                        // Тут можна відкрити детальну сторінку з серіями
+                    });
+
+                    scroll.append(html);
                 });
-
-                if (videos.length > 0) {
-                    this.display(videos);
-                } else {
-                    this.similars(items);
-                }
             } else {
-                this.empty();
+                scroll.append(Lampa.Template.get('yummyanime_empty'));
             }
+
+            Lampa.Controller.collectionSet(scroll.render());
         };
 
-        this.display = function(animeList) {
-            var _this = this;
-            var anime = animeList[0]; // Беремо перше знайдене аніме
-            
-            // Тут має бути логіка отримання посилань на серії.
-            // Спрощена версія: просто показуємо знайдене аніме.
-            var videos = [{
-                title: anime.title,
-                url: YUMMY_API_BASE + '/anime/' + anime.slug,
-                method: 'play',
-                qualitys: 'HD'
-            }];
-
-            this.draw(videos, {
-                onEnter: function(item, html) {
-                    _this.getFileUrl(item, function(json) {
-                        if (json && json.url) {
-                            var playlist = [];
-                            var first = _this.toPlayElement(item);
-                            first.url = json.url;
-                            playlist.push(first);
-                            if (first.url) {
-                                Lampa.Player.play(first);
-                                Lampa.Player.playlist(playlist);
-                            }
-                        }
-                    }, true);
-                }
-            });
-        };
-
-        this.getFileUrl = function(file, call) {
-            var _this = this;
-            Lampa.Loading.start(function() {
-                Lampa.Loading.stop();
-                Lampa.Controller.toggle('content');
-                network.clear();
-            });
-            
-            // Тут має бути виклик до YummyAnime API для отримання прямого посилання на відео.
-            // Поки що використовуємо спрощений варіант.
-            call({ url: file.url, headers: addHeaders() });
-        };
-
-        this.toPlayElement = function(file) {
-            return {
-                title: file.title,
-                url: file.url,
-                quality: file.qualitys,
-                voice_name: file.voice_name
-            };
-        };
-
-        this.filter = function(filter_items, choice) {
-            filter.set('sort', filter_sources.map(function(e) {
-                return { title: sources[e].name, source: e, selected: e == balanser };
-            }));
-        };
-
-        this.getChoice = function() {
-            return { season: 0, voice: 0 };
-        };
-
-        this.saveChoice = function(choice) {};
-
-        this.replaceChoice = function(choice) {};
-
-        this.reset = function() {
+        this.empty = function() {
             scroll.clear();
-            scroll.body().append(Lampa.Template.get('lampac_content_loading'));
+            scroll.append(Lampa.Template.get('yummyanime_empty'));
+            this.loading(false);
         };
 
         this.loading = function(status) {
@@ -248,33 +150,6 @@
                 this.activity.loader(false);
                 this.activity.toggle();
             }
-        };
-
-        this.draw = function(items, params) {
-            scroll.clear();
-            var _this = this;
-            items.forEach(function(item) {
-                var html = Lampa.Template.get('lampac_prestige_full', item);
-                html.on('hover:enter', function() {
-                    if (params.onEnter) params.onEnter(item, html);
-                });
-                scroll.append(html);
-            });
-            Lampa.Controller.enable('content');
-        };
-
-        this.empty = function() {
-            scroll.clear();
-            scroll.append('<div class="online-empty"><div class="online-empty__title">Нічого не знайдено</div></div>');
-            this.loading(false);
-        };
-
-        this.noConnectToServer = function() {
-            this.empty();
-        };
-
-        this.doesNotAnswer = function() {
-            this.empty();
         };
 
         this.start = function() {
@@ -290,17 +165,13 @@
                 down: function() { Navigator.move('down'); },
                 right: function() { Navigator.move('right'); },
                 left: function() { Navigator.move('left'); },
-                back: this.back.bind(this)
+                back: function() { Lampa.Activity.backward(); }
             });
             Lampa.Controller.toggle('content');
         };
 
         this.render = function() {
             return files.render();
-        };
-
-        this.back = function() {
-            Lampa.Activity.backward();
         };
 
         this.destroy = function() {
@@ -310,41 +181,88 @@
         };
     }
 
-    // --- ІНІЦІАЛІЗАЦІЯ ПЛАГІНА ---
-    function startPlugin() {
-        if (window.yummyanime_plugin) return;
-        window.yummyanime_plugin = true;
+    // ========== ДОДАВАННЯ КНОПКИ НА КАРТКУ ==========
+    function addButtonToMovieCard(card) {
+        var render = card.activity.render();
+        if (render.find('.yummyanime--button').length) return; // Кнопка вже є
 
-        // Додаємо локалізацію
-        Lampa.Lang.add({
-            lampac_watch: { uk: 'Дивитися онлайн' },
-            lampac_balanser: { uk: 'Джерело' },
-            title_online: { uk: 'Онлайн' },
-            lampac_nolink: { uk: 'Не вдалося отримати посилання' }
+        // SVG-іконка (проста іконка "play")
+        var svgIcon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+
+        var btn = $('<div class="selector full-launch__button view--online yummyanime--button">' +
+                    svgIcon +
+                    '<span>Онлайн (Yummy)</span></div>');
+
+        btn.on('hover:enter', function() {
+            resetTemplates();
+            Lampa.Component.add('yummyanime', Component);
+
+            var movie = card.movie || card.data.movie;
+            Lampa.Activity.push({
+                url: '',
+                title: 'YummyAnime',
+                component: 'yummyanime',
+                search: movie.title,
+                movie: movie,
+                page: 1
+            });
         });
 
-        // Додаємо кнопку на картку фільму
+        render.find('.view--torrent').after(btn);
+    }
+
+    // ========== ІНІЦІАЛІЗАЦІЯ ПЛАГІНА ==========
+    function initPlugin() {
+        if (window.yummyanime_plugin_loaded) return;
+        window.yummyanime_plugin_loaded = true;
+
+        // Локалізація
+        Lampa.Lang.add({
+            yummyanime_button: { uk: 'Онлайн (Yummy)' }
+        });
+
+        // Додаємо кнопку при завантаженні картки
         Lampa.Listener.follow('full', function(e) {
-            if (e.type == 'complited') {
-                var btn = $('<div class="selector full-launch__button view--online yummyanime--button">' +
-                           '<svg ...><span>#{title_online}</span></div>');
-                btn.on('hover:enter', function() {
-                    Lampa.Activity.push({
-                        url: '',
-                        title: Lampa.Lang.translate('title_online'),
-                        component: 'yummyanime',
-                        search: e.data.movie.title,
-                        movie: e.data.movie,
-                        page: 1
-                    });
-                });
-                e.object.activity.render().find('.view--torrent').after(btn);
+            if (e.type === 'complited') {
+                addButtonToMovieCard(e.object);
             }
         });
 
-        // Реєструємо компонент
-        Lampa.Component.add('yummyanime', Component);
+        // Якщо картка вже відкрита (наприклад, після перезавантаження)
+        try {
+            var active = Lampa.Activity.active();
+            if (active && active.component === 'full') {
+                addButtonToMovieCard(active);
+            }
+        } catch (e) {}
+
+        // Реєстрація плагіна в меню "Розширення"
+        Lampa.Manifest.plugins = {
+            type: 'video',
+            version: '1.0.0',
+            name: 'YummyAnime',
+            description: 'Пошук та перегляд аніме через YummyAnime API',
+            component: 'yummyanime',
+            onContextMenu: function() {
+                return { name: 'YummyAnime', description: 'Відкрити пошук' };
+            },
+            onContextLauch: function(obj) {
+                resetTemplates();
+                Lampa.Component.add('yummyanime', Component);
+                Lampa.Activity.push({
+                    url: '',
+                    title: 'YummyAnime',
+                    component: 'yummyanime',
+                    search: obj.title,
+                    movie: obj,
+                    page: 1
+                });
+            }
+        };
     }
 
-    if (!window.yummyanime_plugin) startPlugin();
+    // Запуск
+    if (!window.yummyanime_plugin_loaded) {
+        initPlugin();
+    }
 })();
