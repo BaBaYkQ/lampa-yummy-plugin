@@ -3,23 +3,21 @@
     window.yummy_plugin_loaded = true;
 
     function start() {
-        console.log('Yummy menu старт');
+        Lampa.Component.add('yummy_main', {
+            create: function () {
+                Lampa.Noty.show('YummyAnime відкрито');
+            }
+        });
 
-        Lampa.Menu.add({
-            title: 'YummyAnime',
-            icon: '🎬',
+        if (!Lampa.Manifest.plugins) Lampa.Manifest.plugins = [];
+
+        Lampa.Manifest.plugins.push({
+            type: 'video',
+            name: 'YummyAnime',
             component: 'yummy_main'
         });
 
-        function YummyMain() {
-            this.create = function () {
-                Lampa.Noty.show('YummyAnime меню працює!');
-            };
-        }
-
-        Lampa.Component.add('yummy_main', YummyMain);
-
-        Lampa.Noty.show('YummyAnime додано в меню');
+        Lampa.Noty.show('YummyAnime plugin додано');
     }
 
     if (window.appready) start();
