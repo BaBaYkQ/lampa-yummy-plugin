@@ -1,14 +1,15 @@
-// Базовий шаблон плагіна Lampa
+// Робоча версія плагіна Lampa для YummyAnime
 (function () {
-    // Захист від повторного завантаження
     if (window.yummy_plugin_loaded) return;
     window.yummy_plugin_loaded = true;
 
-    // Функція, яка запускає логіку плагіна
-    const startPlugin = function () {
-        console.log('✅ YummyAnime Plugin: Запуск...');
+    // ⚙️ НАЛАШТУВАННЯ: Вставте ваш API-ключ
+    const API_TOKEN = '2m1x9bxtu1t-p29w';
+    const API_BASE_URL = 'https://api.yani.tv'; // Базовий URL API
 
-        // Реєструємо нове джерело в Lampa
+    const startPlugin = function () {
+        console.log('✅ YummyAnime Plugin: Запуск успішний!');
+
         Lampa.Api.sources.push({
             id: 'yummy_source',
             name: '🎬 YummyAnime',
@@ -16,27 +17,88 @@
 
             // --- Отримання списку аніме ---
             list: (page, filter, category, callback) => {
-                // Тут буде логіка отримання списку
-                console.log('📺 Завантаження списку, сторінка:', page);
-                callback([], 0);
+                const limit = 30;
+                const offset = (page - 1) * limit;
+                const url = `${API_BASE_URL}/anime?limit=${limit}&offset=${offset}`;
+
+                Lampa.Network.get(url, (response) => {
+                    try {
+                        const data = JSON.parse(response);
+                        const items = (data.anime || []).map(item => ({
+                            title: item.title || item.original_title || 'Без назви',
+                            poster: item.poster_url || null,
+                            description: item.description || '',
+                            id: item.id,
+                        }));
+                        callback(items, data.total || 0);
+                    } catch (e) {
+                        console.error('Помилка обробки списку:', e);
+                        callback([], 0);
+                    }
+                }, (error) => {
+                    console.error('Помилка завантаження списку:', error);
+                    callback([], 0);
+                }, { headers: { 'X-Application': API_TOKEN } });
             },
 
             // --- Отримання посилання на відео ---
             play: (data, callback) => {
-                // Тут буде логіка отримання відео
-                console.log('🎞️ Отримання відео для серії:', data);
-                callback(null);
+                const animeId = data.id;
+                const episodeNumber = data.episode;
+                const url = `${API_BASE_URL}/anime/${animeId}?include_videos=true`;
+
+                Lampa.Network.get(url, (response) => {
+                    try {
+                        const animeData = JSON.parse(response);
+                        const video = (animeData.videos || []).find(v => v.episode === episodeNumber);
+                        if (video && video.stream_url) {
+                            callback({
+                                url: video.stream_url,
+                                quality: 'HD',
+                            });
+                        } else {
+                            console.error('Відео для серії не знайдено');
+                            callback(null);
+                        }
+                    } catch (e) {
+                        console.error('Помилка обробки відео:', e);
+                        callback(null);
+                    }
+                }, (error) => {
+                    console.error('Помилка завантаження відео:', error);
+                    callback(null);
+                }, { headers: { 'X-Application': API_TOKEN } });
             },
 
             // --- Пошук ---
             search: (query, page, callback) => {
-                console.log('🔍 Пошук запиту:', query);
-                callback([], 0);
+                if (!query || query.length < 3) return callback([], 0);
+                const limit = 20;
+                const offset = (page - 1) * limit;
+                const url = `${API_BASE_URL}/anime/search?query=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`;
+
+                Lampa.Network.get(url, (response) => {
+                    try {
+                        const data = JSON.parse(response);
+                        const items = (data.anime || []).map(item => ({
+                            title: item.title || item.original_title || 'Без назви',
+                            poster: item.poster_url || null,
+                            description: item.description || '',
+                            id: item.id,
+                        }));
+                        callback(items, data.total || 0);
+                    } catch (e) {
+                        console.error('Помилка пошуку:', e);
+                        callback([], 0);
+                    }
+                }, (error) => {
+                    console.error('Помилка під час пошуку:', error);
+                    callback([], 0);
+                }, { headers: { 'X-Application': API_TOKEN } });
             },
         });
     };
 
-    // Очікуємо на повне завантаження Lampa
     if (window.appready) {
         startPlugin();
     } else {
